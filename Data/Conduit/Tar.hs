@@ -93,6 +93,7 @@ getBytes' :: Int -> Get B.ByteString
 getBytes' n = chompEnd <$> getBytes n
 
 parseFlag :: Word8 -> TypeFlag
+parseFlag 0  = NormalFile
 parseFlag 48 = NormalFile
 parseFlag 49 = HardLink
 parseFlag 50 = SymbolicLink

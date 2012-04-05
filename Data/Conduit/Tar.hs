@@ -1,6 +1,7 @@
 module Data.Conduit.Tar
     (
-    -- * USTAR Header
+    -- * USTAR Header & Blocks
+    Block(..),
     Header(..),
     TypeFlag(..),
 

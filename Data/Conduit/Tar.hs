@@ -189,14 +189,12 @@ extract = sinkState Nothing push close
             NormalFile -> do
                 handle <- liftIO $ openFile (BC.unpack $ headerName header) WriteMode
                 return . StateProcessing $ Just handle
-            _ -> do liftIO . putStrLn . show $ header
-                    undefined
+            _ -> return $ StateProcessing Nothing
           push (Just handle) (BlockHeader header) = do
             liftIO $ hFlush handle >> hClose handle
             push Nothing (BlockHeader header)
           push (Just handle) (BlockBytes bytes) = do
-            liftIO $ do B.hPut handle bytes
-                        B.putStr bytes
+            liftIO $ B.hPut handle bytes
             return . StateProcessing $ Just handle
           close (Just handle) = liftIO $ hClose handle
           close Nothing = return ()

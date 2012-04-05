@@ -22,5 +22,6 @@ library
     bytestring,
     cereal,
     conduit,
+    containers,
     directory,
     transformers

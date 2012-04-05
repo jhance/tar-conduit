@@ -15,6 +15,8 @@ import Control.Monad.IO.Class
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import Data.Conduit
+import qualified Data.Foldable as F
+import qualified Data.Sequence as S
 import Data.Serialize
 import Data.Word
 import System.Directory
@@ -159,7 +161,7 @@ numberChunks h = case headerType h of
 -- length 512 bytes (since this is what tar uses).
 rechunk :: Monad m => Conduit B.ByteString m B.ByteString
 rechunk = conduitState B.empty push close
-    where push leftover input = return $ StateProducing leftover' output
+    where push leftover input = return $ StateProducing leftover' (F.toList output)
             where input' = leftover `B.append` input
                   (output, leftover') = splitBytes input'
           close leftover = if B.null leftover
@@ -169,16 +171,14 @@ rechunk = conduitState B.empty push close
 -- | Split a @B.ByteString@ into a list of 512 @B.ByteString@'s and
 -- possibly a remainder (which will be @B.empty@ if there is no
 -- remainder)
---
--- Todo: Use a sequence/dlist instead of a list
-splitBytes :: B.ByteString -> ([B.ByteString], B.ByteString)
-splitBytes bytes = let (x, y) = go bytes ([], B.empty)
-                   in (reverse x, y)
+splitBytes :: B.ByteString -> (S.Seq B.ByteString, B.ByteString)
+splitBytes bytes = let (x, y) = go bytes (S.empty, B.empty)
+                   in (x, y)
     where go bytes (acc, _) | B.length bytes < 512 = (acc, bytes)
-                            | B.length bytes == 512 = (bytes:acc, B.empty)
+                            | B.length bytes == 512 = (acc S.|> bytes, B.empty)
                             | otherwise =
                                 let (chunk, rest) = B.splitAt 512 bytes
-                                in go rest (chunk:acc, B.empty)
+                                in go rest (acc S.|> chunk, B.empty)
 
 extract :: MonadIO m => Sink Block m ()
 extract = sinkState Nothing push close

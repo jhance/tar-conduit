@@ -21,4 +21,6 @@ library
     base,
     bytestring,
     cereal,
-    conduit
+    conduit,
+    directory,
+    transformers

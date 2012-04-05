@@ -8,10 +8,14 @@ module Data.Conduit.Tar
 where
 
 import Control.Applicative
+import Control.Monad.IO.Class
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as BC
 import Data.Conduit
 import Data.Serialize
 import Data.Word
+import System.Directory
+import System.IO
 
 data Block = BlockBytes B.ByteString -- ^ A bytestring chunk of 512 bytes
              | BlockHeader Header
@@ -118,26 +122,27 @@ chompEnd bytes | B.null bytes = B.empty
 
 -- | Extracts blocks from a tar file.
 blocks :: Monad m => Conduit B.ByteString m Block
-blocks = rechunk =$= tar'
+blocks = rechunk =$= blocks'
 
 -- | Invariant: The input bytes to this are guaranteed to be 512 bytes
 -- in length. Implemented similarly to a map, but has to keep track of
 -- whether or not it should read a header, so it can't just use
 -- the builtin map.
-tar' :: Monad m => Conduit B.ByteString m Block
-tar' = conduitState 0 push close
+blocks' :: Monad m => Conduit B.ByteString m Block
+blocks' = conduitState 0 push close
     where push n input | B.head input == 0 = return $ StateFinished Nothing []
                        | otherwise = push' n input
             where push' 0 input = return $ StateProducing nchunks output
                     where header = parseHeader input
                           nchunks = numberChunks header
                           output = [BlockHeader header]
-                  push' 1 input = return $ StateProducing 0 output
-                    where output = [BlockBytes $ chompEnd input]
                   push' n input = return $ StateProducing (n - 1) output
-                    where output = [BlockBytes input]
+                    where output = blockBytes $ chompEnd input
           close _ = return []
 
+blockBytes :: B.ByteString -> [Block]
+blockBytes bytes | B.null bytes = []
+                 | otherwise = [BlockBytes bytes]
 numberChunks :: Header -> Integer
 numberChunks h = case headerType h of
     NormalFile -> headerFileSize h `div` 512
@@ -150,7 +155,9 @@ rechunk = conduitState B.empty push close
     where push leftover input = return $ StateProducing leftover' output
             where input' = leftover `B.append` input
                   (output, leftover') = splitBytes input'
-          close leftover = return [leftover]
+          close leftover = if B.null leftover
+                                then return []
+                                else error "not multiple of 512"
 
 -- | Split a @B.ByteString@ into a list of 512 @B.ByteString@'s and
 -- possibly a remainder (which will be @B.empty@ if there is no
@@ -161,7 +168,26 @@ splitBytes :: B.ByteString -> ([B.ByteString], B.ByteString)
 splitBytes bytes = let (x, y) = go bytes ([], B.empty)
                    in (reverse x, y)
     where go bytes (acc, _) | B.length bytes < 512 = (acc, bytes)
-                            | B.length bytes == 512 = (acc, B.empty)
+                            | B.length bytes == 512 = (bytes:acc, B.empty)
                             | otherwise =
                                 let (chunk, rest) = B.splitAt 512 bytes
                                 in go rest (chunk:acc, B.empty)
+
+extract :: MonadIO m => Sink Block m ()
+extract = sinkState Nothing push close
+    where push Nothing (BlockHeader header) = case headerType header of
+            Directory -> do
+                liftIO . createDirectory . BC.unpack . headerName $ header
+                return $ StateProcessing Nothing 
+            NormalFile -> do
+                handle <- liftIO $ openFile (BC.unpack $ headerName header) WriteMode
+                return . StateProcessing $ Just handle
+          push (Just handle) (BlockHeader header) = do
+            liftIO $ hFlush handle >> hClose handle
+            push Nothing (BlockHeader header)
+          push (Just handle) (BlockBytes bytes) = do
+            liftIO $ do B.hPut handle bytes
+                        B.putStr bytes
+            return . StateProcessing $ Just handle
+          close (Just handle) = liftIO $ hClose handle
+          close Nothing = return ()

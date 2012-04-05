@@ -70,8 +70,8 @@ parseHeader bytes = case h of
                 <*> getBytes' 100   -- link name
                 <*> getBytes' 6     -- magic
                 <*> getOctal 2      -- version
-                <*> getBytes 32     -- user name
-                <*> getBytes 32     -- group name
+                <*> getBytes' 32    -- user name
+                <*> getBytes' 32    -- group name
                 <*> getOctal 8      -- device major number
                 <*> getOctal 8      -- device minor number
                 <*> getBytes' 155   -- filename prefix
@@ -100,7 +100,7 @@ parseFlag n | n <= 90 && n >= 65 = VendorSpecificExtension n
 getOctal :: Integral i => Int -> Get i
 getOctal n = isolate n $ do
     bytes <- mapM (const getWord8) [1..n]
-    return . octalToIntegral . reverse $ bytes
+    return . octalToIntegral . reverse . init $ bytes
 
 -- First byte is the least significace
 octalToIntegral :: Integral i => [Word8] -> i
@@ -126,17 +126,22 @@ blocks = rechunk =$= tar'
 -- the builtin map.
 tar' :: Monad m => Conduit B.ByteString m Block
 tar' = conduitState 0 push close
-    where push 0 input = return $ StateProducing (numberChunks header) [BlockHeader header]
-            where header = parseHeader input
-          push 1 input = return $ StateProducing 0 [BlockBytes $ chompEnd input]
-          push n input = return $ StateProducing (n - 1) [BlockBytes input]
+    where push n input | B.head input == 0 = return $ StateFinished Nothing []
+                       | otherwise = push' n input
+            where push' 0 input = return $ StateProducing nchunks output
+                    where header = parseHeader input
+                          nchunks = numberChunks header
+                          output = [BlockHeader header]
+                  push' 1 input = return $ StateProducing 0 output
+                    where output = [BlockBytes $ chompEnd input]
+                  push' n input = return $ StateProducing (n - 1) output
+                    where output = [BlockBytes input]
           close _ = return []
 
 numberChunks :: Header -> Integer
-numberChunks h = let s = headerFileSize h
-                 in if s `rem` 512 == 0
-                        then s `div` 512
-                        else (s `div` 512) + 1
+numberChunks h = case headerType h of
+    NormalFile -> headerFileSize h `div` 512
+    _ -> 0
 
 -- | Rechunk a stream of strict @B.ByteString@'s into @B.ByteString@'s of
 -- length 512 bytes (since this is what tar uses).

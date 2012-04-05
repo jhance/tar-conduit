@@ -1,10 +1,13 @@
 module Data.Conduit.Tar
-    {-(
+    (
     -- * USTAR Header
     Header(..),
     TypeFlag(..),
-    tar
-    )-}
+
+    -- * Conduits and Sinks
+    blocks,
+    extract
+    )
 where
 
 import Control.Applicative
@@ -143,9 +146,13 @@ blocks' = conduitState 0 push close
 blockBytes :: B.ByteString -> [Block]
 blockBytes bytes | B.null bytes = []
                  | otherwise = [BlockBytes bytes]
+
 numberChunks :: Header -> Integer
 numberChunks h = case headerType h of
-    NormalFile -> headerFileSize h `div` 512
+    NormalFile -> let s = headerFileSize h
+                  in if s `mod` 512 == 0
+                    then s `div` 512
+                    else (s `div` 512) + 1
     _ -> 0
 
 -- | Rechunk a stream of strict @B.ByteString@'s into @B.ByteString@'s of
@@ -182,6 +189,8 @@ extract = sinkState Nothing push close
             NormalFile -> do
                 handle <- liftIO $ openFile (BC.unpack $ headerName header) WriteMode
                 return . StateProcessing $ Just handle
+            _ -> do liftIO . putStrLn . show $ header
+                    undefined
           push (Just handle) (BlockHeader header) = do
             liftIO $ hFlush handle >> hClose handle
             push Nothing (BlockHeader header)
